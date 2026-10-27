@@ -118,7 +118,7 @@ test.describe('机器人运动控制 Agent - E2E 验收测试', () => {
     await waitForExecutionDone(page)
 
     await expect(page.getByText('参数非法 (speed)', { exact: true })).toBeVisible()
-    await expect(page.getByText('失败', { exact: true })).toBeVisible()
+    await expect(page.getByText('失败', { exact: true }).first()).toBeVisible()
   })
 
   test('ROBOT-005: 参数非法 - 目标为空阻止执行', async ({ page }) => {
@@ -135,7 +135,7 @@ test.describe('机器人运动控制 Agent - E2E 验收测试', () => {
     await waitForExecutionDone(page)
 
     await expect(page.getByText('参数非法 (target)', { exact: true })).toBeVisible()
-    await expect(page.getByText('失败', { exact: true })).toBeVisible()
+    await expect(page.getByText('失败', { exact: true }).first()).toBeVisible()
   })
 
   test('ROBOT-006: 障碍物阻挡 - 自动重试后标记被阻挡', async ({ page }) => {
@@ -166,7 +166,7 @@ test.describe('机器人运动控制 Agent - E2E 验收测试', () => {
     await page.getByRole('button', { name: '执行编排' }).click()
     await waitForExecutionDone(page)
 
-    await expect(page.getByText('失败', { exact: true })).toBeVisible()
+    await expect(page.getByText('失败', { exact: true }).first()).toBeVisible()
     await expect(page.getByText('动作超时', { exact: true })).toBeVisible()
   })
 
