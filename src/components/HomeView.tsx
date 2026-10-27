@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { Check, ChevronRight, MapPin, QrCode, Sparkles, Users } from 'lucide-react'
+import { Bot, Check, ChevronRight, MapPin, QrCode, Sparkles, Users } from 'lucide-react'
 import hotpot from '@/assets/hotpot.jpg'
 import { Button } from '@/components/ui/button'
 
@@ -10,9 +10,9 @@ const tableOptions = [
   { code: 'D03', areaKey: 'bind.area.window', seats: 6 },
 ]
 
-interface HomeViewProps { onBind: (table: string) => void }
+interface HomeViewProps { onBind: (table: string) => void; onRobot: () => void }
 
-export function HomeView({ onBind }: HomeViewProps) {
+export function HomeView({ onBind, onRobot }: HomeViewProps) {
   const { t } = useTranslation()
   return (
     <main className="relative min-h-screen overflow-hidden bg-rice-100 paper-noise">
@@ -59,6 +59,7 @@ export function HomeView({ onBind }: HomeViewProps) {
             ))}
           </div>
           <Button onClick={() => onBind('A08')} className="mt-4 w-full"><MapPin size={17} />{t('bind.quick_enter')}</Button>
+          <Button variant="outline" onClick={onRobot} className="mt-3 w-full"><Bot size={17} />{t('robot.title')}</Button>
         </section>
       </div>
     </main>

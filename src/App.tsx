@@ -9,6 +9,8 @@ import { CheckoutView } from '@/components/CheckoutView'
 import { DemoConsole } from '@/components/DemoConsole'
 import { MenuView } from '@/components/MenuView'
 import { OrderView } from '@/components/OrderView'
+import { RobotView } from '@/components/RobotView'
+import { RobotProvider } from '@/robot/context'
 import { ServiceSheet } from '@/components/ServiceSheet'
 import { TopBar } from '@/components/TopBar'
 import { Button } from '@/components/ui/button'
@@ -57,7 +59,7 @@ export default function App() {
   const waitingServices = state.services.filter((service) => service.status === 'waiting').length
 
   // 视图 ↔ URL hash 双向同步；未绑定桌台时只有 home 可达，其余地址回落到 home
-  const canView = useCallback((view: ViewName) => view === 'home' || !!state.table, [state.table])
+  const canView = useCallback((view: ViewName) => view === 'home' || view === 'robot' || !!state.table, [state.table])
   const navigate = useCallback((view: ViewName) => dispatch({ type: 'SET_VIEW', view }), [])
   useViewRoute(state.view, { onNavigate: navigate, canView })
 
@@ -86,8 +88,16 @@ export default function App() {
     dispatch({ type: 'SET_MESSAGE', message: elderly ? '已切换为常规模式' : '已切换为老人模式' })
   }
 
+  if (state.view === 'robot') {
+    return (
+      <RobotProvider>
+        <RobotView onBack={() => dispatch({ type: 'SET_VIEW', view: 'home' })} />
+      </RobotProvider>
+    )
+  }
+
   if (state.view === 'home' || !state.table) {
-    return <HomeView onBind={(table) => dispatch({ type: 'BIND_TABLE', table })} />
+    return <HomeView onBind={(table) => dispatch({ type: 'BIND_TABLE', table })} onRobot={() => dispatch({ type: 'SET_VIEW', view: 'robot' })} />
   }
 
   if (state.view === 'welcome') {
