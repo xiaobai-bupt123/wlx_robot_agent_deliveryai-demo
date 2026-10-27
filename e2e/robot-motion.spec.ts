@@ -6,9 +6,12 @@ import { test, expect, type Page, type Locator } from '@playwright/test'
  * 覆盖 Spec 验收标准：导航路由、手动编排执行、五类异常处理、LLM 任务下发、
  * localStorage 持久化、i18n 国际化、边界约束（火锅点单不受影响）。
  *
- * 异常测试通过 page.addInitScript 预置 localStorage exceptionSim + Math.random 覆写，
+ * 异常测试通过 page.addInitScript 覆写 Math.random + 设置页启用异常模拟，
  * 实现确定性异常注入（simulateAction 中 Math.random < probability 触发注入，
  * pickRandomException 按 Math.floor(random*4) 选择类型）。
+ *
+ * 注意：因 React StrictMode 双重调用 effect，持久化 effect 会在 HYDRATE 之前覆盖
+ * localStorage，因此不使用 addInitScript 预置 localStorage 配置，改用 UI 交互。
  */
 
 // ─── 辅助函数 ──────────────────────────────────────────────
@@ -31,15 +34,14 @@ async function switchTab(page: Page, tabName: string) {
   await page.getByRole('tab', { name: new RegExp(tabName) }).click()
 }
 
-/** 展开已保存方案并加载第一个配置 */
-async function loadFirstConfig(page: Page) {
-  await page.getByRole('button', { name: /已保存方案/ }).click()
-  await page.getByRole('button', { name: '加载' }).click()
-}
-
 /** 等待编排执行完成（执行总结出现） */
 async function waitForExecutionDone(page: Page) {
   await expect(page.getByText('执行总结')).toBeVisible({ timeout: 20000 })
+}
+
+/** 展开步骤卡片以编辑参数（点击控制区第 3 个按钮 = 展开/折叠） */
+async function expandStep(page: Page) {
+  await page.locator('div.flex.items-center.gap-1 button').nth(2).click()
 }
 
 /** 在 LLM 设置标签页配置并保存 LLM */
@@ -49,35 +51,20 @@ async function configureLlm(page: Page, baseUrl: string, apiKey: string, model: 
   await page.getByPlaceholder('gpt-4o-mini').fill(model)
   // 设置页有两个"保存"按钮（LLM 配置 + 异常模拟），LLM 的在前
   await page.getByRole('button', { name: '保存' }).first().click()
+  // 等待"已保存"提示确认保存成功
+  await expect(page.getByText('已保存')).toBeVisible({ timeout: 5000 })
 }
 
-/** 预置 localStorage 编排配置 + 异常模拟 + Math.random 覆写（函数式 addInitScript 保证序列化正确） */
-async function presetRobotState(
-  page: Page,
-  opts: {
-    steps: Array<{ actionType: string; params: Record<string, unknown> }>
-    exceptionSim?: { enabled: boolean; probability: number }
-    randomValue?: number
-  },
-) {
-  const config = {
-    id: 'preset-cfg',
-    name: '预设配置',
-    steps: opts.steps.map((s, i) => ({ id: `s${i}`, actionType: s.actionType, params: s.params })),
-    createdAt: Date.now(),
-  }
-  await page.addInitScript(
-    (init: { configs: string; exceptionSim: string | null; randomValue: number | null }) => {
-      localStorage.setItem('robot-configs', init.configs)
-      if (init.exceptionSim) localStorage.setItem('robot-exception-sim', init.exceptionSim)
-      if (init.randomValue !== null) Math.random = () => init.randomValue
-    },
-    {
-      configs: JSON.stringify([config]),
-      exceptionSim: opts.exceptionSim ? JSON.stringify(opts.exceptionSim) : null,
-      randomValue: opts.randomValue ?? null,
-    },
-  )
+/** 在 LLM 设置页启用异常模拟（概率设为 1）并保存 */
+async function enableExceptionSim(page: Page) {
+  await page.getByRole('checkbox', { name: /启用异常模拟/ }).check()
+  // 设置概率滑块为 1（100%）
+  await page.locator('input[type="range"]').evaluate((el: HTMLInputElement) => {
+    el.value = '1'
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  // 保存异常模拟设置（第二个"保存"按钮）
+  await page.getByRole('button', { name: '保存' }).nth(1).click()
 }
 
 // ─── 测试用例 ──────────────────────────────────────────────
@@ -125,17 +112,12 @@ test.describe('机器人运动控制 Agent - E2E 验收测试', () => {
   })
 
   test('ROBOT-004: 参数非法 - 速度≤0 阻止执行不重试', async ({ page }) => {
-    await presetRobotState(page, {
-      steps: [
-        {
-          actionType: 'grab',
-          params: { speed: 0, target: '目标物体', retries: 2, timeout: 3000, priority: 'normal' },
-        },
-      ],
-    })
     await goToRobot(page)
     await switchTab(page, '动作编排')
-    await loadFirstConfig(page)
+    await page.getByRole('button', { name: /添加步骤 · 抓取/ }).click()
+    await expandStep(page)
+    // 速度输入是展开表单中第一个 number input
+    await page.locator('input[type="number"]').first().fill('0')
 
     await page.getByRole('button', { name: '执行编排' }).click()
     await waitForExecutionDone(page)
@@ -145,17 +127,14 @@ test.describe('机器人运动控制 Agent - E2E 验收测试', () => {
   })
 
   test('ROBOT-005: 参数非法 - 目标为空阻止执行', async ({ page }) => {
-    await presetRobotState(page, {
-      steps: [
-        {
-          actionType: 'move',
-          params: { speed: 80, target: '', retries: 1, timeout: 5000, priority: 'normal' },
-        },
-      ],
-    })
     await goToRobot(page)
     await switchTab(page, '动作编排')
-    await loadFirstConfig(page)
+    await page.getByRole('button', { name: /添加步骤 · 移动/ }).click()
+    await expandStep(page)
+    // 通过标签文本定位目标输入框
+    const targetLabel = page.getByText('目标位置/对象', { exact: true })
+    const targetInput = targetLabel.locator('xpath=..').locator('input')
+    await targetInput.fill('')
 
     await page.getByRole('button', { name: '执行编排' }).click()
     await waitForExecutionDone(page)
@@ -166,20 +145,13 @@ test.describe('机器人运动控制 Agent - E2E 验收测试', () => {
 
   test('ROBOT-006: 障碍物阻挡 - 自动重试后标记被阻挡', async ({ page }) => {
     // Math.random()=0.1 → probability check 0.1<1=true; pickRandomException floor(0.1*4)=0 → obstacle
-    await presetRobotState(page, {
-      steps: [
-        {
-          actionType: 'grab',
-          params: { speed: 50, target: '目标物体', retries: 1, timeout: 5000, priority: 'normal' },
-        },
-      ],
-      exceptionSim: { enabled: true, probability: 1 },
-      randomValue: 0.1,
-    })
+    await page.addInitScript(`Math.random = () => 0.1;`)
     await goToRobot(page)
-    await switchTab(page, '动作编排')
-    await loadFirstConfig(page)
+    await switchTab(page, 'LLM 设置')
+    await enableExceptionSim(page)
 
+    await switchTab(page, '动作编排')
+    await page.getByRole('button', { name: /添加步骤 · 抓取/ }).click()
     await page.getByRole('button', { name: '执行编排' }).click()
     await waitForExecutionDone(page)
 
@@ -189,20 +161,13 @@ test.describe('机器人运动控制 Agent - E2E 验收测试', () => {
 
   test('ROBOT-007: 动作超时 - 重试后标记失败（目标不可达同路径）', async ({ page }) => {
     // Math.random()=0.3 → pickRandomException floor(0.3*4)=1 → timeout
-    await presetRobotState(page, {
-      steps: [
-        {
-          actionType: 'grab',
-          params: { speed: 50, target: '目标物体', retries: 1, timeout: 5000, priority: 'normal' },
-        },
-      ],
-      exceptionSim: { enabled: true, probability: 1 },
-      randomValue: 0.3,
-    })
+    await page.addInitScript(`Math.random = () => 0.3;`)
     await goToRobot(page)
-    await switchTab(page, '动作编排')
-    await loadFirstConfig(page)
+    await switchTab(page, 'LLM 设置')
+    await enableExceptionSim(page)
 
+    await switchTab(page, '动作编排')
+    await page.getByRole('button', { name: /添加步骤 · 抓取/ }).click()
     await page.getByRole('button', { name: '执行编排' }).click()
     await waitForExecutionDone(page)
 
@@ -212,24 +177,14 @@ test.describe('机器人运动控制 Agent - E2E 验收测试', () => {
 
   test('ROBOT-008: 硬件故障 - 立即中止整个编排链', async ({ page }) => {
     // Math.random()=0.9 → pickRandomException floor(0.9*4)=3 → hardware
-    await presetRobotState(page, {
-      steps: [
-        {
-          actionType: 'grab',
-          params: { speed: 50, target: '目标物体', retries: 2, timeout: 5000, priority: 'normal' },
-        },
-        {
-          actionType: 'move',
-          params: { speed: 80, target: '目标位置', retries: 1, timeout: 5000, priority: 'normal' },
-        },
-      ],
-      exceptionSim: { enabled: true, probability: 1 },
-      randomValue: 0.9,
-    })
+    await page.addInitScript(`Math.random = () => 0.9;`)
     await goToRobot(page)
-    await switchTab(page, '动作编排')
-    await loadFirstConfig(page)
+    await switchTab(page, 'LLM 设置')
+    await enableExceptionSim(page)
 
+    await switchTab(page, '动作编排')
+    await page.getByRole('button', { name: /添加步骤 · 抓取/ }).click()
+    await page.getByRole('button', { name: /添加步骤 · 移动/ }).click()
     await page.getByRole('button', { name: '执行编排' }).click()
     await waitForExecutionDone(page)
 
@@ -278,10 +233,10 @@ test.describe('机器人运动控制 Agent - E2E 验收测试', () => {
     await configureLlm(page, 'https://fake-llm.example.com', 'test-key', 'test-model')
 
     await switchTab(page, '任务下发')
+    // 先填任务文本，再验证按钮可用（按钮在 task 为空时也会 disabled）
+    await page.getByPlaceholder(/描述你的任务/).fill('抓取桌上红色物体后跳跃到门口')
     const dispatchBtn = page.getByRole('button', { name: '下发任务' })
     await expect(dispatchBtn).toBeEnabled()
-
-    await page.getByPlaceholder(/描述你的任务/).fill('抓取桌上红色物体后跳跃到门口')
     await dispatchBtn.click()
 
     await expect(page.getByText('动作方案预览')).toBeVisible({ timeout: 10000 })
