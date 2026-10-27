@@ -57,13 +57,8 @@ async function configureLlm(page: Page, baseUrl: string, apiKey: string, model: 
 
 /** 在 LLM 设置页启用异常模拟（概率设为 1）并保存 */
 async function enableExceptionSim(page: Page) {
+  // 仅启用异常模拟开关即可（默认概率 0.3 与计数器式 Math.random 配合使用）
   await page.getByRole('checkbox', { name: /启用异常模拟/ }).check()
-  // 设置概率滑块为 1（100%）
-  await page.locator('input[type="range"]').evaluate((el: HTMLInputElement) => {
-    el.value = '1'
-    el.dispatchEvent(new Event('input', { bubbles: true }))
-  })
-  // 保存异常模拟设置（第二个"保存"按钮）
   await page.getByRole('button', { name: '保存' }).nth(1).click()
 }
 
@@ -122,7 +117,7 @@ test.describe('机器人运动控制 Agent - E2E 验收测试', () => {
     await page.getByRole('button', { name: '执行编排' }).click()
     await waitForExecutionDone(page)
 
-    await expect(page.getByText(/参数非法.*speed/)).toBeVisible()
+    await expect(page.getByText('参数非法 (speed)', { exact: true })).toBeVisible()
     await expect(page.getByText('失败', { exact: true })).toBeVisible()
   })
 
@@ -139,12 +134,12 @@ test.describe('机器人运动控制 Agent - E2E 验收测试', () => {
     await page.getByRole('button', { name: '执行编排' }).click()
     await waitForExecutionDone(page)
 
-    await expect(page.getByText(/参数非法.*target/)).toBeVisible()
+    await expect(page.getByText('参数非法 (target)', { exact: true })).toBeVisible()
     await expect(page.getByText('失败', { exact: true })).toBeVisible()
   })
 
   test('ROBOT-006: 障碍物阻挡 - 自动重试后标记被阻挡', async ({ page }) => {
-    // Math.random()=0.1 → probability check 0.1<1=true; pickRandomException floor(0.1*4)=0 → obstacle
+    // Math.random()=0.1 → probability check 0.1<0.3=true; pickRandomException floor(0.1*4)=0 → obstacle
     await page.addInitScript(`Math.random = () => 0.1;`)
     await goToRobot(page)
     await switchTab(page, 'LLM 设置')
@@ -156,12 +151,12 @@ test.describe('机器人运动控制 Agent - E2E 验收测试', () => {
     await waitForExecutionDone(page)
 
     await expect(page.getByText('被阻挡', { exact: true })).toBeVisible()
-    await expect(page.getByText('障碍物阻挡')).toBeVisible()
+    await expect(page.getByText('障碍物阻挡', { exact: true })).toBeVisible()
   })
 
   test('ROBOT-007: 动作超时 - 重试后标记失败（目标不可达同路径）', async ({ page }) => {
-    // Math.random()=0.3 → pickRandomException floor(0.3*4)=1 → timeout
-    await page.addInitScript(`Math.random = () => 0.3;`)
+    // 计数器式 Math.random：奇数调用（概率检查）返回 0.1 < 0.3 ✓；偶数调用（pickRandomException）返回 0.3 → floor(0.3*4)=1 → timeout
+    await page.addInitScript(`let n=0;Math.random=function(){return(++n%2)?0.1:0.3};`)
     await goToRobot(page)
     await switchTab(page, 'LLM 设置')
     await enableExceptionSim(page)
@@ -172,12 +167,12 @@ test.describe('机器人运动控制 Agent - E2E 验收测试', () => {
     await waitForExecutionDone(page)
 
     await expect(page.getByText('失败', { exact: true })).toBeVisible()
-    await expect(page.getByText('动作超时')).toBeVisible()
+    await expect(page.getByText('动作超时', { exact: true })).toBeVisible()
   })
 
   test('ROBOT-008: 硬件故障 - 立即中止整个编排链', async ({ page }) => {
-    // Math.random()=0.9 → pickRandomException floor(0.9*4)=3 → hardware
-    await page.addInitScript(`Math.random = () => 0.9;`)
+    // 计数器式 Math.random：奇数调用（概率检查）返回 0.1 < 0.3 ✓；偶数调用（pickRandomException）返回 0.9 → floor(0.9*4)=3 → hardware
+    await page.addInitScript(`let n=0;Math.random=function(){return(++n%2)?0.1:0.9};`)
     await goToRobot(page)
     await switchTab(page, 'LLM 设置')
     await enableExceptionSim(page)
@@ -240,8 +235,8 @@ test.describe('机器人运动控制 Agent - E2E 验收测试', () => {
     await dispatchBtn.click()
 
     await expect(page.getByText('动作方案预览')).toBeVisible({ timeout: 10000 })
-    await expect(page.getByText('红色物体')).toBeVisible()
-    await expect(page.getByText('门口')).toBeVisible()
+    await expect(page.getByText('红色物体', { exact: true })).toBeVisible()
+    await expect(page.getByText('门口', { exact: true })).toBeVisible()
 
     await page.getByRole('button', { name: '确认执行' }).click()
 
